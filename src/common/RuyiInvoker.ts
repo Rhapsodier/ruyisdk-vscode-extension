@@ -6,10 +6,13 @@
  * result handling.
  */
 
-import { spawn } from 'child_process'
+import { spawn, exec } from 'child_process'
 import type { SpawnOptions } from 'child_process'
+import { promisify } from 'util'
 
 import { DEFAULT_CMD_TIMEOUT_MS } from './constants'
+
+const execAsync = promisify(exec)
 
 export type RuyiResult = {
   stdout: string
@@ -25,9 +28,34 @@ export type RuyiRunOptions = Pick<SpawnOptions, 'cwd' | 'env'> & {
   timeout?: number
 }
 
+async function detectRuyiExecutionMethod(): Promise<{
+  method: 'binary' | 'pipx' | 'python';
+  command: string;
+  args: string[];
+}> {
+  try {
+    await execAsync('ruyi --version', { timeout: 2000 })
+    return { method: 'binary', command: 'ruyi', args: [] }
+  } catch {
+  }
+  
+  try {
+    const pipxVenvPath = `${process.env.HOME}/.local/share/pipx/venvs/ruyi/bin/python`
+    await execAsync(`${pipxVenvPath} -m ruyi --version`, { timeout: 2000 })
+    return { method: 'pipx', command: pipxVenvPath, args: ['-m', 'ruyi'] }
+  } catch {
+  }
+  
+  return { method: 'python', command: 'python3', args: ['-m', 'ruyi'] }
+}
+
 // Execute Ruyi CLI command
-export function runRuyi(
+export async function runRuyi(
   args: string[], options?: RuyiRunOptions): Promise<RuyiResult> {
+  const executionMethod = await detectRuyiExecutionMethod()
+  const command = executionMethod.command
+  const commandArgs = [...executionMethod.args, ...args]
+
   return new Promise((resolve) => {
     const spawnOptions: SpawnOptions = {
       shell: true,
@@ -38,7 +66,7 @@ export function runRuyi(
 
     const timeout = options?.timeout ?? DEFAULT_CMD_TIMEOUT_MS
 
-    const child = spawn('python3', ['-m', 'ruyi', ...args], spawnOptions)
+    const child = spawn(command, commandArgs, spawnOptions)
     let stdout = ''
     let stderr = ''
     let timer: NodeJS.Timeout | undefined
